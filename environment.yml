@@ -1,0 +1,22 @@
+name: cjm-transcription-plugin-qwen3-forced-aligner
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - torch
+    - qwen-asr
+    - cjm-plugin-system
+    - cjm-transcription-plugin-system
+    - soundfile
+    - numpy
+    - fastcore
+    # Worker deps
+    - fastapi
+    - uvicorn
+    - psutil
+    - httpx

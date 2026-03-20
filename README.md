@@ -8,3 +8,157 @@
 ``` bash
 pip install cjm_transcription_plugin_qwen3_forced_aligner
 ```
+
+## Project Structure
+
+    nbs/
+    ├── meta.ipynb   # Metadata introspection for the Qwen3 Forced Aligner plugin used by cjm-ctl to generate the registration manifest.
+    └── plugin.ipynb # Plugin implementation for Qwen3 word-level forced alignment
+
+Total: 2 notebooks
+
+## Module Dependencies
+
+``` mermaid
+graph LR
+    meta[meta<br/>Metadata]
+    plugin[plugin<br/>Qwen3 Forced Aligner Plugin]
+
+    plugin --> meta
+```
+
+*1 cross-module dependencies detected*
+
+## CLI Reference
+
+No CLI commands found in this project.
+
+## Module Overview
+
+Detailed documentation for each module in the project:
+
+### Metadata (`meta.ipynb`)
+
+> Metadata introspection for the Qwen3 Forced Aligner plugin used by
+> cjm-ctl to generate the registration manifest.
+
+#### Import
+
+``` python
+from cjm_transcription_plugin_qwen3_forced_aligner.meta import (
+    get_plugin_metadata
+)
+```
+
+#### Functions
+
+``` python
+def get_plugin_metadata() -> Dict[str, Any]:  # Plugin metadata for manifest generation
+    """Return metadata required to register this plugin with the PluginManager."""
+    # Fallback base path (current behavior for backward compatibility)
+    base_path = os.path.dirname(os.path.dirname(sys.executable))
+
+    # Use CJM config if available, else fallback to env-relative paths
+    cjm_data_dir = os.environ.get("CJM_DATA_DIR")
+    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
+
+    # Plugin data directory
+    plugin_name = "cjm-transcription-plugin-qwen3-forced-aligner"
+    if cjm_data_dir
+    "Return metadata required to register this plugin with the PluginManager."
+```
+
+### Qwen3 Forced Aligner Plugin (`plugin.ipynb`)
+
+> Plugin implementation for Qwen3 word-level forced alignment
+
+#### Import
+
+``` python
+from cjm_transcription_plugin_qwen3_forced_aligner.plugin import (
+    Qwen3ForcedAlignerConfig,
+    Qwen3ForcedAlignerPlugin
+)
+```
+
+#### Classes
+
+``` python
+@dataclass
+class Qwen3ForcedAlignerConfig:
+    "Configuration for the Qwen3 Forced Aligner plugin."
+    
+    model_id: str = field(...)
+    device: str = field(...)
+    dtype: str = field(...)
+    attn_implementation: str = field(...)
+    language: str = field(...)
+```
+
+``` python
+class Qwen3ForcedAlignerPlugin:
+    def __init__(self):
+        """Initialize the plugin with default state."""
+        self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+        self._config: Qwen3ForcedAlignerConfig = None
+    "Qwen3 Forced Alignment plugin for word-level audio-text alignment."
+    
+    def __init__(self):
+            """Initialize the plugin with default state."""
+            self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+            self._config: Qwen3ForcedAlignerConfig = None
+        "Initialize the plugin with default state."
+    
+    def name(self) -> str:  # Plugin name identifier
+            return "cjm-transcription-plugin-qwen3-forced-aligner"
+    
+        @property
+        def version(self) -> str:  # Plugin version string
+    
+    def version(self) -> str:  # Plugin version string
+            return "0.0.1"
+    
+        @property
+        def supported_formats(self) -> List[str]:  # Supported audio file formats
+    
+    def supported_formats(self) -> List[str]:  # Supported audio file formats
+            return ["wav", "mp3", "flac", "ogg", "m4a"]
+    
+        def is_available(self) -> bool:  # True if qwen_asr is importable
+    
+    def is_available(self) -> bool:  # True if qwen_asr is importable
+            """Check if the Qwen3 forced aligner is available."""
+            return QWEN3_AVAILABLE
+    
+        def get_config_schema(self) -> Dict[str, Any]:  # JSON Schema for configuration
+        "Check if the Qwen3 forced aligner is available."
+    
+    def get_config_schema(self) -> Dict[str, Any]:  # JSON Schema for configuration
+            """Return JSON Schema for UI generation."""
+            return dataclass_to_jsonschema(Qwen3ForcedAlignerConfig)
+    
+        def get_current_config(self) -> Dict[str, Any]:  # Current configuration as dictionary
+        "Return JSON Schema for UI generation."
+    
+    def get_current_config(self) -> Dict[str, Any]:  # Current configuration as dictionary
+            """Return current configuration state."""
+            if not self._config
+        "Return current configuration state."
+    
+    def initialize(
+            self,
+            config: Optional[Any] = None  # Configuration dataclass, dict, or None
+        ) -> None
+        "Initialize or re-configure the plugin (idempotent)."
+    
+    def execute(
+            self,
+            audio: Union[AudioData, str, Path],  # Audio data or file path
+            text: str,                            # Transcript text to align against
+            **kwargs
+        ) -> ForcedAlignResult:  # Word-level alignment result
+        "Perform forced alignment of text against audio."
+    
+    def cleanup(self) -> None
+        "Clean up resources."
+```

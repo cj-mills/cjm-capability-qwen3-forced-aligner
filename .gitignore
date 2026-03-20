@@ -150,3 +150,12 @@ checklink/cookies.txt
 
 # Quarto
 .quarto
+
+
+# Custom
+/configs/
+/claude-docs/
+/.cjm/
+/runtime/
+/models/
+/test_files/
