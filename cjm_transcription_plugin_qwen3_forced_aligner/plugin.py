@@ -27,6 +27,7 @@ from cjm_transcription_plugin_system.core import AudioData
 from cjm_transcription_plugin_system.forced_alignment_core import ForcedAlignItem, ForcedAlignResult
 from cjm_transcription_plugin_system.forced_alignment_storage import ForcedAlignmentStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
+from cjm_plugin_system.core.interface import RELOAD_TRIGGER
 from cjm_plugin_system.core.errors import (
     PluginInputError, PluginResourceError, ResourceShortfall,
 )
@@ -46,6 +47,7 @@ class Qwen3ForcedAlignerConfig:
         default="Qwen/Qwen3-ForcedAligner-0.6B",
         metadata={
             SCHEMA_TITLE: "Model ID",
+            RELOAD_TRIGGER: "model",  # CR-4: change triggers model reload
             SCHEMA_DESC: "HuggingFace model identifier",
             SCHEMA_ENUM: ["Qwen/Qwen3-ForcedAligner-0.6B"],
         }
@@ -55,6 +57,7 @@ class Qwen3ForcedAlignerConfig:
         default="auto",
         metadata={
             SCHEMA_TITLE: "Device",
+            RELOAD_TRIGGER: "model",  # CR-4: change triggers model reload
             SCHEMA_DESC: "Device for model inference ('auto', 'cuda:0', 'cpu')",
         }
     )
@@ -63,6 +66,7 @@ class Qwen3ForcedAlignerConfig:
         default="bfloat16",
         metadata={
             SCHEMA_TITLE: "Data Type",
+            RELOAD_TRIGGER: "model",  # CR-4: change triggers model reload
             SCHEMA_DESC: "Model precision",
             SCHEMA_ENUM: ["bfloat16", "float16", "float32"],
         }
@@ -72,6 +76,7 @@ class Qwen3ForcedAlignerConfig:
         default="sdpa",
         metadata={
             SCHEMA_TITLE: "Attention Implementation",
+            RELOAD_TRIGGER: "model",  # CR-4: change triggers model reload
             SCHEMA_DESC: "Attention backend ('sdpa' for PyTorch native, 'flash_attention_2' if flash-attn installed)",
             SCHEMA_ENUM: ["sdpa", "flash_attention_2", "eager"],
         }
@@ -145,7 +150,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
             )
             if needs_reload:
                 self.logger.info("Config change detected, unloading model")
-                self._unload_model()
+                self._release_model()
 
         self._config = new_config
 
@@ -192,7 +197,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         self.report_progress(0.25, "Model loaded.")
         self.logger.info("Model loaded successfully")
 
-    def _unload_model(self):
+    def _release_model(self):
         """Release model and free GPU memory."""
         if self._model is not None:
             self.logger.info("Unloading model")
@@ -300,5 +305,5 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        self._unload_model()
+        self._release_model()
         self.logger.info("Cleanup completed")
