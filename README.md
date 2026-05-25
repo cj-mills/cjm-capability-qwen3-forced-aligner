@@ -153,7 +153,7 @@ class Qwen3ForcedAlignerPlugin:
     
     def execute(
             self,
-            audio: Union[AudioData, str, Path],  # Audio data or file path
+            audio: Union[str, Path],  # Audio data or file path
             text: str,                            # Transcript text to align against
             **kwargs
         ) -> ForcedAlignResult:  # Word-level alignment result
