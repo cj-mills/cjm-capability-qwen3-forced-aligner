@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Union, ClassVar
 from uuid import uuid4
 
 import torch
+from fastcore.basics import patch
 
 try:
     from qwen_asr import Qwen3ForcedAligner
@@ -150,9 +151,6 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
     def supported_formats(self) -> List[str]:  # Supported audio file formats
         return ["wav", "mp3", "flac", "ogg", "m4a"]
 
-    def is_available(self) -> bool:  # True if qwen_asr is importable
-        """Check if the Qwen3 forced aligner is available."""
-        return QWEN3_AVAILABLE
 
     def get_config_schema(self) -> Dict[str, Any]:  # JSON Schema for configuration
         """Return JSON Schema for UI generation."""
@@ -164,15 +162,6 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
             return {}
         return config_to_dict(self.config)
 
-    def _apply_config(
-        self,
-        config: Optional[Any] = None  # Configuration dataclass, dict, or None
-    ) -> None:
-        """CR-4: apply config values only. Called by initialize (first-time) and the
-        substrate's reconfigure delta path. Model release on a model_id/device/dtype/
-        attn_implementation change is handled declaratively via RELOAD_TRIGGER ->
-        _release_model (device/dtype are resolved lazily in _load_model)."""
-        self.config = dict_to_config(Qwen3ForcedAlignerConfig, config or {})
 
     def initialize(
         self,
@@ -190,72 +179,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
         self.logger.info(f"Initialized with model={self.config.model_id}, device={self.config.device}")
 
-    def _load_model(self):
-        """Load model on first use. Heartbeat-wrapped HF Hub download + build."""
-        if self._model is not None:
-            return
 
-        self.report_progress(0.0, "Loading Qwen3 Forced Aligner model...")
-
-        device = self.config.device
-        if device == "auto":
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-        dtype_map = {
-            "bfloat16": torch.bfloat16,
-            "float16": torch.float16,
-            "float32": torch.float32,
-        }
-        dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
-
-        self.report_progress(0.1, f"Loading model {self.config.model_id}...")
-        self.logger.info(f"Loading model {self.config.model_id} on {device} with {self.config.dtype}")
-
-        # Heartbeat wraps the WHOLE download + build: snapshot_download_with_progress
-        # streams the HF Hub download (per-file tqdm -> report_progress is sugar) and the
-        # heartbeat is the stall-detector floor for the silent stretches. Qwen3ForcedAligner
-        # .from_pretrained forwards **kwargs to AutoModel.from_pretrained, so cache_dir /
-        # revision / local_files_only / trust_remote_code apply; cache_dir stays at the
-        # HFCacheConfig default (None -> HF_HOME) so the model + the separately-loaded
-        # AutoProcessor share one snapshot-populated cache.
-        with self.heartbeat("loading Qwen3 model"):
-            snapshot_download_with_progress(
-                self.config.model_id,
-                report_progress=self.report_progress,
-                cache_dir=self.config.cache_dir,
-                revision=self.config.revision,
-                local_files_only=self.config.local_files_only,
-            )
-            self._model = load_pretrained_with_oom(
-                Qwen3ForcedAligner,
-                self.config.model_id,
-                label=f"loading Qwen3 model {self.config.model_id!r}",
-                dtype=dtype,
-                device_map=device,
-                attn_implementation=self.config.attn_implementation,
-                cache_dir=self.config.cache_dir,
-                revision=self.config.revision,
-                local_files_only=True,
-                trust_remote_code=self.config.trust_remote_code,
-            )
-
-        self._loaded_model_id = self.config.model_id
-        self._loaded_device = device
-        self._loaded_dtype = self.config.dtype
-        self._loaded_attn = self.config.attn_implementation
-
-        self.report_progress(0.25, "Model loaded.")
-        self.logger.info("Model loaded successfully")
-
-    def _release_model(self):
-        """CR-4: release the model + free CUDA cache (cjm-torch-plugin-utils).
-        RELOAD_TRIGGER target for model_id/device/dtype/attn_implementation; on_disable /
-        cleanup delegate here. Idempotent (release_model no-ops when already None)."""
-        release_model(self, ["_model"], device="cuda", logger=self.logger)
-        self._loaded_model_id = None
-        self._loaded_device = None
-        self._loaded_dtype = None
-        self._loaded_attn = None
 
     def execute(
         self,
@@ -338,17 +262,112 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         self.logger.info(f"Alignment complete: {len(items)} words")
         return result
 
-    def prefetch(self) -> None:
-        """CR-4 (SG-19): eagerly load the model so the first execute() doesn't pay
-        the download/load cost. Idempotent via _load_model's None-guard."""
-        self._load_model()
+# %% ../nbs/plugin.ipynb #m-is-available
+@patch
+def is_available(self:Qwen3ForcedAlignerPlugin) -> bool:  # True if qwen_asr is importable
+    """Check if the Qwen3 forced aligner is available."""
+    return QWEN3_AVAILABLE
 
-    def on_disable(self) -> None:
-        """CR-2: release the GPU model when the operator disables the plugin (the
-        worker stays alive); lazy reload on the next execute after re-enable."""
-        self._release_model()
+# %% ../nbs/plugin.ipynb #m-apply-config
+@patch
+def _apply_config(
+    self:Qwen3ForcedAlignerPlugin,
+    config: Optional[Any] = None  # Configuration dataclass, dict, or None
+) -> None:
+    """CR-4: apply config values only. Called by initialize (first-time) and the
+    substrate's reconfigure delta path. Model release on a model_id/device/dtype/
+    attn_implementation change is handled declaratively via RELOAD_TRIGGER ->
+    _release_model (device/dtype are resolved lazily in _load_model)."""
+    self.config = dict_to_config(Qwen3ForcedAlignerConfig, config or {})
 
-    def cleanup(self) -> None:
-        """Clean up resources."""
-        self._release_model()
-        self.logger.info("Cleanup completed")
+# %% ../nbs/plugin.ipynb #m-load-model
+@patch
+def _load_model(self:Qwen3ForcedAlignerPlugin):
+    """Load model on first use. Heartbeat-wrapped HF Hub download + build."""
+    if self._model is not None:
+        return
+
+    self.report_progress(0.0, "Loading Qwen3 Forced Aligner model...")
+
+    device = self.config.device
+    if device == "auto":
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    dtype_map = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
+
+    self.report_progress(0.1, f"Loading model {self.config.model_id}...")
+    self.logger.info(f"Loading model {self.config.model_id} on {device} with {self.config.dtype}")
+
+    # Heartbeat wraps the WHOLE download + build: snapshot_download_with_progress
+    # streams the HF Hub download (per-file tqdm -> report_progress is sugar) and the
+    # heartbeat is the stall-detector floor for the silent stretches. Qwen3ForcedAligner
+    # .from_pretrained forwards **kwargs to AutoModel.from_pretrained, so cache_dir /
+    # revision / local_files_only / trust_remote_code apply; cache_dir stays at the
+    # HFCacheConfig default (None -> HF_HOME) so the model + the separately-loaded
+    # AutoProcessor share one snapshot-populated cache.
+    with self.heartbeat("loading Qwen3 model"):
+        snapshot_download_with_progress(
+            self.config.model_id,
+            report_progress=self.report_progress,
+            cache_dir=self.config.cache_dir,
+            revision=self.config.revision,
+            local_files_only=self.config.local_files_only,
+        )
+        self._model = load_pretrained_with_oom(
+            Qwen3ForcedAligner,
+            self.config.model_id,
+            label=f"loading Qwen3 model {self.config.model_id!r}",
+            dtype=dtype,
+            device_map=device,
+            attn_implementation=self.config.attn_implementation,
+            cache_dir=self.config.cache_dir,
+            revision=self.config.revision,
+            local_files_only=True,
+            trust_remote_code=self.config.trust_remote_code,
+        )
+
+    self._loaded_model_id = self.config.model_id
+    self._loaded_device = device
+    self._loaded_dtype = self.config.dtype
+    self._loaded_attn = self.config.attn_implementation
+
+    self.report_progress(0.25, "Model loaded.")
+    self.logger.info("Model loaded successfully")
+
+# %% ../nbs/plugin.ipynb #m-release-model
+@patch
+def _release_model(self:Qwen3ForcedAlignerPlugin):
+    """CR-4: release the model + free CUDA cache (cjm-torch-plugin-utils).
+    RELOAD_TRIGGER target for model_id/device/dtype/attn_implementation; on_disable /
+    cleanup delegate here. Idempotent (release_model no-ops when already None)."""
+    release_model(self, ["_model"], device="cuda", logger=self.logger)
+    self._loaded_model_id = None
+    self._loaded_device = None
+    self._loaded_dtype = None
+    self._loaded_attn = None
+
+# %% ../nbs/plugin.ipynb #m-prefetch
+@patch
+def prefetch(self:Qwen3ForcedAlignerPlugin) -> None:
+    """CR-4 (SG-19): eagerly load the model so the first execute() doesn't pay
+    the download/load cost. Idempotent via _load_model's None-guard."""
+    self._load_model()
+
+# %% ../nbs/plugin.ipynb #m-on-disable
+@patch
+def on_disable(self:Qwen3ForcedAlignerPlugin) -> None:
+    """CR-2: release the GPU model when the operator disables the plugin (the
+    worker stays alive); lazy reload on the next execute after re-enable."""
+    self._release_model()
+
+# %% ../nbs/plugin.ipynb #m-cleanup
+@patch
+def cleanup(self:Qwen3ForcedAlignerPlugin) -> None:
+    """Clean up resources."""
+    self._release_model()
+    self.logger.info("Cleanup completed")
