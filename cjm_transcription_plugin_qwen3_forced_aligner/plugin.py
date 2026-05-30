@@ -11,7 +11,7 @@ __all__ = ['Qwen3ForcedAlignerConfig', 'Qwen3ForcedAlignerPlugin']
 import logging
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, ClassVar
 from uuid import uuid4
 
 import torch
@@ -26,10 +26,8 @@ from cjm_transcription_plugin_system.forced_alignment_interface import ForcedAli
 from cjm_transcription_plugin_system.forced_alignment_core import ForcedAlignItem, ForcedAlignResult
 from cjm_transcription_plugin_system.forced_alignment_storage import ForcedAlignmentStorage
 from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
-from cjm_plugin_system.core.interface import RELOAD_TRIGGER
-from cjm_plugin_system.core.errors import (
-    PluginInputError, PluginResourceError, ResourceShortfall,
-)
+from cjm_plugin_system.core.interface import RELOAD_TRIGGER, EnvVarSpec
+from cjm_plugin_system.core.errors import PluginInputError
 from cjm_plugin_system.utils.validation import (
     dict_to_config, config_to_dict, dataclass_to_jsonschema,
     SCHEMA_TITLE, SCHEMA_DESC, SCHEMA_ENUM
@@ -37,10 +35,20 @@ from cjm_plugin_system.utils.validation import (
 
 from .meta import get_plugin_metadata
 
+# Shared plugin utils: HF Hub download/cache mixin + load + torch release + CUDA-OOM typing.
+from cjm_hf_plugin_utils.cache_config import HFCacheConfig
+from cjm_hf_plugin_utils.download import snapshot_download_with_progress
+from cjm_hf_plugin_utils.loading import load_pretrained_with_oom
+from cjm_torch_plugin_utils.memory import release_model
+from cjm_torch_plugin_utils.oom import cuda_oom_to_plugin_resource_error
+
 # %% ../nbs/plugin.ipynb #cell-config
 @dataclass
-class Qwen3ForcedAlignerConfig:
-    """Configuration for the Qwen3 Forced Aligner plugin."""
+class Qwen3ForcedAlignerConfig(HFCacheConfig):
+    """Configuration for the Qwen3 Forced Aligner plugin.
+
+    Composes HFCacheConfig (cache_dir / revision / local_files_only / trust_remote_code,
+    each RELOAD_TRIGGER-tagged) so HF Hub download behaviour is operator-controllable."""
 
     model_id: str = field(
         default="Qwen/Qwen3-ForcedAligner-0.6B",
@@ -94,10 +102,34 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
     config_class = Qwen3ForcedAlignerConfig
 
+    # Track 19 (CR-12 worker-env model): worker spawn env declared on the class.
+    # CUDA_VISIBLE_DEVICES + OMP_NUM_THREADS are static; HF_HOME is templated to the
+    # substrate models dir (HF Hub model). The substrate resolves + injects at Popen.
+    WORKER_ENV: ClassVar[List[EnvVarSpec]] = [
+        EnvVarSpec(
+            name="CUDA_VISIBLE_DEVICES",
+            default="0",
+            label="GPU Device",
+            description="Which GPU index the worker uses.",
+        ),
+        EnvVarSpec(
+            name="OMP_NUM_THREADS",
+            default="4",
+            label="OpenMP Threads",
+            description="Thread cap for CPU-side ops.",
+        ),
+        EnvVarSpec(
+            name="HF_HOME",
+            default="${CJM_MODELS_DIR}/huggingface",
+            label="HF Cache Directory",
+            description="HuggingFace Hub cache root (templated to the substrate models dir).",
+        ),
+    ]
+
     def __init__(self):
         """Initialize the plugin with default state."""
         self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-        self._config: Qwen3ForcedAlignerConfig = None
+        self.config: Qwen3ForcedAlignerConfig = None
         self._model = None
         self._loaded_model_id: Optional[str] = None
         self._loaded_device: Optional[str] = None
@@ -111,7 +143,8 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
     @property
     def version(self) -> str:  # Plugin version string
-        return "0.0.1"
+        from cjm_transcription_plugin_qwen3_forced_aligner import __version__
+        return __version__
 
     @property
     def supported_formats(self) -> List[str]:  # Supported audio file formats
@@ -127,9 +160,9 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
     def get_current_config(self) -> Dict[str, Any]:  # Current configuration as dictionary
         """Return current configuration state."""
-        if not self._config:
+        if not self.config:
             return {}
-        return config_to_dict(self._config)
+        return config_to_dict(self.config)
 
     def _apply_config(
         self,
@@ -139,7 +172,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         substrate's reconfigure delta path. Model release on a model_id/device/dtype/
         attn_implementation change is handled declaratively via RELOAD_TRIGGER ->
         _release_model (device/dtype are resolved lazily in _load_model)."""
-        self._config = dict_to_config(Qwen3ForcedAlignerConfig, config or {})
+        self.config = dict_to_config(Qwen3ForcedAlignerConfig, config or {})
 
     def initialize(
         self,
@@ -155,16 +188,16 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         if db_path:
             self._storage = ForcedAlignmentStorage(db_path)
 
-        self.logger.info(f"Initialized with model={self._config.model_id}, device={self._config.device}")
+        self.logger.info(f"Initialized with model={self.config.model_id}, device={self.config.device}")
 
     def _load_model(self):
-        """Load model on first use. Reports progress for download + load."""
+        """Load model on first use. Heartbeat-wrapped HF Hub download + build."""
         if self._model is not None:
             return
 
         self.report_progress(0.0, "Loading Qwen3 Forced Aligner model...")
 
-        device = self._config.device
+        device = self.config.device
         if device == "auto":
             device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -173,38 +206,56 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        dtype = dtype_map.get(self._config.dtype, torch.bfloat16)
+        dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
 
-        self.report_progress(0.1, f"Loading model {self._config.model_id}...")
-        self.logger.info(f"Loading model {self._config.model_id} on {device} with {self._config.dtype}")
+        self.report_progress(0.1, f"Loading model {self.config.model_id}...")
+        self.logger.info(f"Loading model {self.config.model_id} on {device} with {self.config.dtype}")
 
-        self._model = Qwen3ForcedAligner.from_pretrained(
-            self._config.model_id,
-            dtype=dtype,
-            device_map=device,
-            attn_implementation=self._config.attn_implementation,
-        )
+        # Heartbeat wraps the WHOLE download + build: snapshot_download_with_progress
+        # streams the HF Hub download (per-file tqdm -> report_progress is sugar) and the
+        # heartbeat is the stall-detector floor for the silent stretches. Qwen3ForcedAligner
+        # .from_pretrained forwards **kwargs to AutoModel.from_pretrained, so cache_dir /
+        # revision / local_files_only / trust_remote_code apply; cache_dir stays at the
+        # HFCacheConfig default (None -> HF_HOME) so the model + the separately-loaded
+        # AutoProcessor share one snapshot-populated cache.
+        with self.heartbeat("loading Qwen3 model"):
+            snapshot_download_with_progress(
+                self.config.model_id,
+                report_progress=self.report_progress,
+                cache_dir=self.config.cache_dir,
+                revision=self.config.revision,
+                local_files_only=self.config.local_files_only,
+            )
+            self._model = load_pretrained_with_oom(
+                Qwen3ForcedAligner,
+                self.config.model_id,
+                label=f"loading Qwen3 model {self.config.model_id!r}",
+                dtype=dtype,
+                device_map=device,
+                attn_implementation=self.config.attn_implementation,
+                cache_dir=self.config.cache_dir,
+                revision=self.config.revision,
+                local_files_only=True,
+                trust_remote_code=self.config.trust_remote_code,
+            )
 
-        self._loaded_model_id = self._config.model_id
+        self._loaded_model_id = self.config.model_id
         self._loaded_device = device
-        self._loaded_dtype = self._config.dtype
-        self._loaded_attn = self._config.attn_implementation
+        self._loaded_dtype = self.config.dtype
+        self._loaded_attn = self.config.attn_implementation
 
         self.report_progress(0.25, "Model loaded.")
         self.logger.info("Model loaded successfully")
 
     def _release_model(self):
-        """Release model and free GPU memory."""
-        if self._model is not None:
-            self.logger.info("Unloading model")
-            del self._model
-            self._model = None
-            self._loaded_model_id = None
-            self._loaded_device = None
-            self._loaded_dtype = None
-            self._loaded_attn = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        """CR-4: release the model + free CUDA cache (cjm-torch-plugin-utils).
+        RELOAD_TRIGGER target for model_id/device/dtype/attn_implementation; on_disable /
+        cleanup delegate here. Idempotent (release_model no-ops when already None)."""
+        release_model(self, ["_model"], device="cuda", logger=self.logger)
+        self._loaded_model_id = None
+        self._loaded_device = None
+        self._loaded_dtype = None
+        self._loaded_attn = None
 
     def execute(
         self,
@@ -232,9 +283,9 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         self.report_progress(0.4, "Running forced alignment...")
         self.logger.info(f"Running alignment on {audio_path} ({len(text)} chars)")
 
-        # Run alignment. SG-47 Track B wraps the inference site so CUDA OOM
-        # surfaces as PluginResourceError → CR-7 reactive-retry reloads.
-        language = kwargs.get("language", self._config.language)
+        # Run alignment. SG-47 Track B wraps the inference site so CUDA OOM surfaces as
+        # PluginResourceError (via cjm-torch-plugin-utils) → CR-7 reactive-retry reloads.
+        language = kwargs.get("language", self.config.language)
         try:
             results = self._model.align(
                 audio=audio_path,
@@ -242,15 +293,8 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
                 language=language,
             )
         except torch.cuda.OutOfMemoryError as e:
-            free_bytes = torch.cuda.mem_get_info()[0] if torch.cuda.is_available() else 0
-            available_mb = free_bytes / (1024 ** 2)
-            raise PluginResourceError(
-                f"CUDA OOM during Qwen3 forced-alignment (audio_chars={len(text)}): {e}",
-                resource_shortfall=ResourceShortfall(
-                    resource='gpu_vram_mb',
-                    needed=available_mb + 100.0,
-                    available=available_mb,
-                ),
+            raise cuda_oom_to_plugin_resource_error(
+                e, label=f"during Qwen3 forced-alignment (text_chars={len(text)})",
             ) from e
 
         self.report_progress(0.8, "Processing results...")
@@ -267,10 +311,10 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
         result = ForcedAlignResult(
             items=items,
             metadata={
-                "model_id": self._config.model_id,
+                "model_id": self.config.model_id,
                 "language": language,
                 "device": self._loaded_device,
-                "dtype": self._config.dtype,
+                "dtype": self.config.dtype,
                 "word_count": len(items),
             }
         )

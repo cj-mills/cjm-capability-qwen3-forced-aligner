@@ -12,6 +12,9 @@ dependencies:
     - qwen-asr
     - cjm-plugin-system
     - cjm-transcription-plugin-system
+    # Shared plugin utils (torch release/OOM + HF Hub download/cache)
+    - cjm-torch-plugin-utils
+    - cjm-hf-plugin-utils
     - soundfile
     - numpy
     - fastcore

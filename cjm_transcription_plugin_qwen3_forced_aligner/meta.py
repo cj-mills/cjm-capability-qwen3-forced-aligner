@@ -21,7 +21,6 @@ def get_plugin_metadata() -> Dict[str, Any]:  # Plugin metadata for manifest gen
 
     # Use CJM config if available, else fallback to env-relative paths
     cjm_data_dir = os.environ.get("CJM_DATA_DIR")
-    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
 
     # Plugin data directory
     plugin_name = "cjm-transcription-plugin-qwen3-forced-aligner"
@@ -35,15 +34,11 @@ def get_plugin_metadata() -> Dict[str, Any]:  # Plugin metadata for manifest gen
     # Ensure data directory exists
     os.makedirs(data_dir, exist_ok=True)
 
-    # Model cache: use models_dir if configured
-    if cjm_models_dir:
-        cache_home = os.path.join(cjm_models_dir, "")
-    else:
-        cache_home = os.path.join(base_path, ".cache")
-
     return {
         "name": plugin_name,
         "version": __version__,
+        # T24: non-empty description required by the substrate validator (SG-6 / V1 gate).
+        "description": "Qwen3 word-level forced alignment — aligns transcript text to per-word audio timestamps.",
         "type": "transcription",
         "category": "forced_alignment",
         "interface": "cjm_transcription_plugin_system.forced_alignment_interface.ForcedAlignmentPlugin",
@@ -56,16 +51,14 @@ def get_plugin_metadata() -> Dict[str, Any]:  # Plugin metadata for manifest gen
 
         "db_path": db_path,
 
+        # Phase 5a / CR-7 reframe: binary hard-facts only (quantitative amounts dropped, V12 gate).
         "resources": {
-            "requires_gpu": True,
-            "min_gpu_vram_mb": 2048,
-            "recommended_gpu_vram_mb": 4096,
-            "min_system_ram_mb": 4096
+            "requires_gpu": True
         },
 
-        "env_vars": {
-            "CUDA_VISIBLE_DEVICES": "0",
-            "OMP_NUM_THREADS": "4",
-            "XDG_CACHE_HOME": cache_home,
-        }
+        # Track 19: CUDA_VISIBLE_DEVICES + OMP_NUM_THREADS + HF_HOME (templated) are
+        # declared on the plugin class via WORKER_ENV; the substrate resolves + injects
+        # them at spawn. (HF_HOME replaces the old XDG_CACHE_HOME trailing-slash quirk;
+        # both resolve to <models>/huggingface/hub.)
+        "env_vars": {}
     }
