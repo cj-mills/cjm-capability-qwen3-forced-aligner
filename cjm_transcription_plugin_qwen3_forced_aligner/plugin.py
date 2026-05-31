@@ -26,7 +26,7 @@ except ImportError:
 from cjm_transcription_plugin_system.forced_alignment_interface import ForcedAlignmentPlugin
 from cjm_transcription_plugin_system.forced_alignment_core import ForcedAlignItem, ForcedAlignResult
 from cjm_transcription_plugin_system.forced_alignment_storage import ForcedAlignmentStorage
-from cjm_plugin_system.utils.hashing import hash_file, hash_bytes
+from cjm_plugin_system.utils.hashing import hash_file, hash_bytes, hash_dict_canonical
 from cjm_plugin_system.core.interface import RELOAD_TRIGGER, EnvVarSpec
 from cjm_plugin_system.core.errors import PluginInputError
 from cjm_plugin_system.utils.validation import (
@@ -197,12 +197,31 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
                 fields_invalid=["audio"],
             )
 
-        # Lazy load model
-        self._load_model()
-
-        self.report_progress(0.3, "Hashing input files...")
+        # Hash inputs (audio content + transcript text) for the cache key, before loading
+        # the model so a pure cache hit skips the model load entirely.
+        self.report_progress(0.2, "Hashing input files...")
         audio_hash = hash_file(audio_path)
         text_hash = hash_bytes(text.encode("utf-8"))
+        # CR-15: config_hash derives from self.config (the effective config). The per-call
+        # `language` kwarg override below is NOT reflected here (and `language` changes the
+        # alignment output) — that override path predates the substrate overhaul and is
+        # slated for removal (candidate CR-15 / project_execute_invocation_contract_gap).
+        config_hash = hash_dict_canonical(config_to_dict(self.config))
+
+        # Cache check (content-correct: audio_path + audio_hash + text_hash + config_hash).
+        # Input is the (audio, transcript) pair, so text_hash is part of the key.
+        if self._storage and not kwargs.get("force", False):
+            cached = self._storage.get_cached(audio_path, audio_hash, text_hash, config_hash)
+            if cached:
+                self.logger.info(f"Using cached alignment for {audio_path}")
+                self.report_progress(1.0, "Alignment complete (cached).")
+                return ForcedAlignResult(
+                    items=[ForcedAlignItem(**item) for item in (cached.items or [])],
+                    metadata=cached.metadata,
+                )
+
+        # Cache miss — lazy load model + align
+        self._load_model()
 
         self.report_progress(0.4, "Running forced alignment...")
         self.logger.info(f"Running alignment on {audio_path} ({len(text)} chars)")
@@ -252,6 +271,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
                 audio_hash=audio_hash,
                 text=text,
                 text_hash=text_hash,
+                config_hash=config_hash,
                 items=[asdict(item) for item in items],
                 metadata=result.metadata,
                 logger=self.logger,
