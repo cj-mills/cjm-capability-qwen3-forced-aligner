@@ -60,7 +60,6 @@ def get_plugin_metadata() -> Dict[str, Any]:  # Plugin metadata for manifest gen
 
     # Use CJM config if available, else fallback to env-relative paths
     cjm_data_dir = os.environ.get("CJM_DATA_DIR")
-    cjm_models_dir = os.environ.get("CJM_MODELS_DIR")
 
     # Plugin data directory
     plugin_name = "cjm-transcription-plugin-qwen3-forced-aligner"
@@ -81,12 +80,81 @@ from cjm_transcription_plugin_qwen3_forced_aligner.plugin import (
 )
 ```
 
+#### Functions
+
+``` python
+@patch
+def is_available(self:Qwen3ForcedAlignerPlugin) -> bool:  # True if qwen_asr is importable
+    "Check if the Qwen3 forced aligner is available."
+```
+
+``` python
+@patch
+def _apply_config(
+    self:Qwen3ForcedAlignerPlugin,
+    config: Optional[Any] = None  # Configuration dataclass, dict, or None
+) -> None
+    """
+    CR-4: apply config values only. Called by initialize (first-time) and the
+    substrate's reconfigure delta path. Model release on a model_id/device/dtype/
+    attn_implementation change is handled declaratively via RELOAD_TRIGGER ->
+    _release_model (device/dtype are resolved lazily in _load_model).
+    """
+```
+
+``` python
+@patch
+def _load_model(self:Qwen3ForcedAlignerPlugin):
+    """Load model on first use. Heartbeat-wrapped HF Hub download + build."""
+    if self._model is not None
+    "Load model on first use. Heartbeat-wrapped HF Hub download + build."
+```
+
+``` python
+@patch
+def _release_model(self:Qwen3ForcedAlignerPlugin)
+    """
+    CR-4: release the model + free CUDA cache (cjm-torch-plugin-utils).
+    RELOAD_TRIGGER target for model_id/device/dtype/attn_implementation; on_disable /
+    cleanup delegate here. Idempotent (release_model no-ops when already None).
+    """
+```
+
+``` python
+@patch
+def prefetch(self:Qwen3ForcedAlignerPlugin) -> None
+    """
+    CR-4 (SG-19): eagerly load the model so the first execute() doesn't pay
+    the download/load cost. Idempotent via _load_model's None-guard.
+    """
+```
+
+``` python
+@patch
+def on_disable(self:Qwen3ForcedAlignerPlugin) -> None
+    """
+    CR-2: release the GPU model when the operator disables the plugin (the
+    worker stays alive); lazy reload on the next execute after re-enable.
+    """
+```
+
+``` python
+@patch
+def cleanup(self:Qwen3ForcedAlignerPlugin) -> None
+    "Clean up resources."
+```
+
 #### Classes
 
 ``` python
 @dataclass
-class Qwen3ForcedAlignerConfig:
-    "Configuration for the Qwen3 Forced Aligner plugin."
+class Qwen3ForcedAlignerConfig(HFCacheConfig):
+    """
+    Configuration for the Qwen3 Forced Aligner plugin.
+    
+    Composes HFCacheConfig (cache_dir / revision / local_files_only / trust_remote_code,
+    each RELOAD_TRIGGER-tagged) so HF Hub download behaviour is operator-controllable.
+    """
     
     model_id: str = field(...)
     device: str = field(...)
@@ -100,13 +168,13 @@ class Qwen3ForcedAlignerPlugin:
     def __init__(self):
         """Initialize the plugin with default state."""
         self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-        self._config: Qwen3ForcedAlignerConfig = None
+        self.config: Qwen3ForcedAlignerConfig = None
     "Qwen3 Forced Alignment plugin for word-level audio-text alignment."
     
     def __init__(self):
             """Initialize the plugin with default state."""
             self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-            self._config: Qwen3ForcedAlignerConfig = None
+            self.config: Qwen3ForcedAlignerConfig = None
         "Initialize the plugin with default state."
     
     def name(self) -> str:  # Plugin name identifier
@@ -116,7 +184,8 @@ class Qwen3ForcedAlignerPlugin:
         def version(self) -> str:  # Plugin version string
     
     def version(self) -> str:  # Plugin version string
-            return "0.0.1"
+            from cjm_transcription_plugin_qwen3_forced_aligner import __version__
+            return __version__
     
         @property
         def supported_formats(self) -> List[str]:  # Supported audio file formats
@@ -124,14 +193,8 @@ class Qwen3ForcedAlignerPlugin:
     def supported_formats(self) -> List[str]:  # Supported audio file formats
             return ["wav", "mp3", "flac", "ogg", "m4a"]
     
-        def is_available(self) -> bool:  # True if qwen_asr is importable
-    
-    def is_available(self) -> bool:  # True if qwen_asr is importable
-            """Check if the Qwen3 forced aligner is available."""
-            return QWEN3_AVAILABLE
     
         def get_config_schema(self) -> Dict[str, Any]:  # JSON Schema for configuration
-        "Check if the Qwen3 forced aligner is available."
     
     def get_config_schema(self) -> Dict[str, Any]:  # JSON Schema for configuration
             """Return JSON Schema for UI generation."""
@@ -142,7 +205,7 @@ class Qwen3ForcedAlignerPlugin:
     
     def get_current_config(self) -> Dict[str, Any]:  # Current configuration as dictionary
             """Return current configuration state."""
-            if not self._config
+            if not self.config
         "Return current configuration state."
     
     def initialize(
@@ -160,25 +223,4 @@ then re-applies config via _apply_config."
             **kwargs
         ) -> ForcedAlignResult:  # Word-level alignment result
         "Perform forced alignment of text against audio."
-    
-    def prefetch(self) -> None:
-            """CR-4 (SG-19): eagerly load the model so the first execute() doesn't pay
-            the download/load cost. Idempotent via _load_model's None-guard."""
-            self._load_model()
-    
-        def on_disable(self) -> None
-        "CR-4 (SG-19): eagerly load the model so the first execute() doesn't pay
-the download/load cost. Idempotent via _load_model's None-guard."
-    
-    def on_disable(self) -> None:
-            """CR-2: release the GPU model when the operator disables the plugin (the
-            worker stays alive); lazy reload on the next execute after re-enable."""
-            self._release_model()
-    
-        def cleanup(self) -> None
-        "CR-2: release the GPU model when the operator disables the plugin (the
-worker stays alive); lazy reload on the next execute after re-enable."
-    
-    def cleanup(self) -> None
-        "Clean up resources."
 ```
