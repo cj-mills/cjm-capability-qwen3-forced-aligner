@@ -140,7 +140,7 @@ class Qwen3ForcedAlignerPlugin(ForcedAlignmentPlugin):
 
     @property
     def name(self) -> str:  # Plugin name identifier
-        return "cjm-transcription-plugin-qwen3-forced-aligner"
+        return get_plugin_metadata()["name"]
 
     @property
     def version(self) -> str:  # Plugin version string
