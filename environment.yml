@@ -1,4 +1,4 @@
-name: cjm-transcription-plugin-qwen3-forced-aligner
+name: cjm-capability-qwen3-forced-aligner
 channels:
   - pytorch
   - nvidia
@@ -10,11 +10,11 @@ dependencies:
   - pip:
     - torch
     - qwen-asr
-    # Substrate (cjm-plugin-system) is AUTO-INJECTED by install-all schema v2 — not listed here.
+    # Substrate (cjm-substrate) is AUTO-INJECTED by install-all schema v2 — not listed here.
     - cjm-capability-primitives
-    # Shared plugin utils (torch release/OOM + HF Hub download/cache)
-    - cjm-torch-plugin-utils
-    - cjm-hf-plugin-utils
+    # Shared capability utils (torch release/OOM + HF Hub download/cache)
+    - cjm-substrate-torch-utils
+    - cjm-substrate-hf-utils
     - soundfile
     - numpy
     - fastcore

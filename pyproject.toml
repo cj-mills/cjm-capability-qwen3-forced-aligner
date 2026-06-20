@@ -3,28 +3,28 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cjm-transcription-plugin-qwen3-forced-aligner"
+name = "cjm-capability-qwen3-forced-aligner"
 dynamic = ["version"]
-description = "A Qwen3-based forced alignment plugin for the cjm-transcription-plugin-system that provides word-level audio-text alignment using Qwen/Qwen3-ForcedAligner-0.6B with progress reporting."
+description = "A Qwen3-based forced-alignment capability for the cjm-substrate runtime that provides word-level audio-text alignment using Qwen/Qwen3-ForcedAligner-0.6B with progress reporting."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [{name = "Christian J. Mills", email = "9126128+cj-mills@users.noreply.github.com"}]
 keywords = ['nbdev', 'jupyter', 'notebook', 'python']
 classifiers = ["Natural Language :: English", "Intended Audience :: Developers", "Development Status :: 3 - Alpha", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3 :: Only"]
-dependencies = ['cjm_plugin_system>=0.0.46', 'cjm_capability_primitives>=0.0.8', 'qwen-asr', 'cjm-torch-plugin-utils>=0.0.10', 'cjm-hf-plugin-utils>=0.0.11']
+dependencies = ['cjm-substrate>=0.0.50', 'cjm-capability-primitives>=0.0.9', 'qwen-asr', 'cjm-substrate-torch-utils>=0.0.11', 'cjm-substrate-hf-utils>=0.0.12']
 
 [project.urls]
-Repository = "https://github.com/cj-mills/cjm-transcription-plugin-qwen3-forced-aligner"
-Documentation = "https://cj-mills.github.io/cjm-transcription-plugin-qwen3-forced-aligner"
+Repository = "https://github.com/cj-mills/cjm-capability-qwen3-forced-aligner"
+Documentation = "https://cj-mills.github.io/cjm-capability-qwen3-forced-aligner"
 
 [project.entry-points.nbdev]
-cjm_transcription_plugin_qwen3_forced_aligner = "cjm_transcription_plugin_qwen3_forced_aligner._modidx:d"
+cjm_capability_qwen3_forced_aligner = "cjm_capability_qwen3_forced_aligner._modidx:d"
 
 [tool.setuptools.dynamic]
-version = {attr = "cjm_transcription_plugin_qwen3_forced_aligner.__version__"}
+version = {attr = "cjm_capability_qwen3_forced_aligner.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["cjm_transcription_plugin_qwen3_forced_aligner*"]
+include = ["cjm_capability_qwen3_forced_aligner*"]
 
 [tool.nbdev]

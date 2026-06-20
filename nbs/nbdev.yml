@@ -2,8 +2,8 @@ project:
   output-dir: _docs
 
 website:
-  title: "cjm-transcription-plugin-qwen3-forced-aligner"
-  site-url: "https://cj-mills.github.io/cjm-transcription-plugin-qwen3-forced-aligner"
-  description: "A Qwen3-based forced alignment plugin for the cjm-transcription-plugin-system that provides word-level audio-text alignment using Qwen/Qwen3-ForcedAligner-0.6B with progress reporting."
+  title: "cjm-capability-qwen3-forced-aligner"
+  site-url: "https://cj-mills.github.io/cjm-capability-qwen3-forced-aligner"
+  description: "A Qwen3-based forced-alignment capability for the cjm-substrate runtime that provides word-level audio-text alignment using Qwen/Qwen3-ForcedAligner-0.6B with progress reporting."
   repo-branch: main
-  repo-url: "https://github.com/cj-mills/cjm-transcription-plugin-qwen3-forced-aligner"
+  repo-url: "https://github.com/cj-mills/cjm-capability-qwen3-forced-aligner"
